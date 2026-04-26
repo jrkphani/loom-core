@@ -10,14 +10,13 @@ from __future__ import annotations
 import asyncio
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from alembic import context
-
 from loom_core.config import load_settings
-from loom_core.storage import Base  # noqa: F401  -- needed for autogenerate
+from loom_core.storage import Base  # needed for autogenerate target_metadata
 
 # Alembic Config object — provides access to alembic.ini values.
 config = context.config

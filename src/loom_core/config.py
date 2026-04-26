@@ -18,9 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-DEFAULT_CONFIG_PATH = (
-    Path.home() / "Library" / "Application Support" / "Loom" / "config.toml"
-)
+DEFAULT_CONFIG_PATH = Path.home() / "Library" / "Application Support" / "Loom" / "config.toml"
 
 
 class CoreSettings(BaseModel):
@@ -29,8 +27,7 @@ class CoreSettings(BaseModel):
     http_host: str = "127.0.0.1"
     http_port: int = 9100
     db_path: Path = Field(
-        default_factory=lambda: Path.home()
-        / "Library/Application Support/Loom/db/loom.sqlite"
+        default_factory=lambda: Path.home() / "Library/Application Support/Loom/db/loom.sqlite"
     )
     vault_path: Path = Field(default_factory=lambda: Path.home() / "Documents/Loom")
     log_level: str = "info"

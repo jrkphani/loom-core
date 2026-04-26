@@ -32,6 +32,9 @@ dev = [
     "pytest-asyncio>=0.24,<0.25",
     "ruff>=0.7,<0.8",
     "mypy>=1.13,<2.0",
+    # loom-mcp is imported in integration tests to exercise the seam.
+    # The path source is declared in [tool.uv.sources] below.
+    "loom-mcp",
 ]
 
 [project.scripts]
@@ -43,6 +46,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/loom_core"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# ---------------------------------------------------------------------------
+# uv — local path overrides for workspace siblings
+# ---------------------------------------------------------------------------
+[tool.uv.sources]
+loom-mcp = { path = "../loom-mcp", editable = true }
 
 # ---------------------------------------------------------------------------
 # Ruff — linter + formatter

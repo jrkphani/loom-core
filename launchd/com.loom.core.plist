@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.loom.core</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jrkphani/.local/bin/uv</string>
+        <string>run</string>
+        <string>--directory</string>
+        <string>/Users/jrkphani/Projects/loom/loom-core</string>
+        <string>uvicorn</string>
+        <string>loom_core.main:app</string>
+        <string>--host</string><string>127.0.0.1</string>
+        <string>--port</string><string>9100</string>
+        <string>--workers</string><string>1</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ANTHROPIC_API_KEY</key>
+        <string>sk-ant-...</string>
+        <key>LOOM_CONFIG_PATH</key>
+        <string>/Users/jrkphani/Library/Application Support/Loom/config.toml</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/jrkphani/Library/Application Support/Loom/logs/core.stdout</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jrkphani/Library/Application Support/Loom/logs/core.stderr</string>
+</dict>
+</plist>

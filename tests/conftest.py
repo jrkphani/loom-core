@@ -80,7 +80,7 @@ async def client(_test_db: Path) -> AsyncIterator[AsyncClient]:
             yield c
     finally:
         app.dependency_overrides.pop(get_session, None)
-        app.state.session_factory = None  # type: ignore[assignment]
+        app.state.session_factory = None
         await engine.dispose()
 
 

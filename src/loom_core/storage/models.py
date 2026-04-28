@@ -548,6 +548,95 @@ class AtomExternalRef(Base):
 
 
 # ---------------------------------------------------------------------------
+# Section 4: Work projection (progressive — work_account_metadata landed in
+# W2 #002; work_engagement_metadata + atom extensions land in W2 #003)
+# ---------------------------------------------------------------------------
+
+
+class WorkAccountMetadata(Base):
+    """Work-domain account metadata (extends arenas).
+
+    One optional row per arena — arena_id is both PK and FK.
+    """
+
+    __tablename__ = "work_account_metadata"
+
+    arena_id: Mapped[str] = mapped_column(String(26), ForeignKey("arenas.id"), primary_key=True)
+    industry: Mapped[str | None] = mapped_column(Text)
+    region: Mapped[str | None] = mapped_column(Text)
+    aws_segment: Mapped[str | None] = mapped_column(Text)
+    customer_type: Mapped[str | None] = mapped_column(Text)
+
+
+class WorkEngagementMetadata(Base):
+    """Work-domain engagement metadata (extends engagements).
+
+    One optional row per engagement — engagement_id is both PK and FK.
+    """
+
+    __tablename__ = "work_engagement_metadata"
+
+    engagement_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("engagements.id"), primary_key=True
+    )
+    sow_value: Mapped[float | None] = mapped_column(Float)
+    sow_currency: Mapped[str | None] = mapped_column(Text)
+    aws_funded: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    aws_program: Mapped[str | None] = mapped_column(Text)
+    swim_lane: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        CheckConstraint(
+            "swim_lane IN ('p1_existing_customer', 'p2_sales_generated',"
+            " 'p3_demand_gen_sdr', 'p4_aws_referral')",
+            name="ck_wem_swim_lane",
+        ),
+    )
+
+
+class WorkCommitmentDirection(Base):
+    """Work-domain commitment direction — actor topology for CRO motion.
+
+    Populated once atoms exist (W3+). Migrated here to keep section 4 complete.
+    """
+
+    __tablename__ = "work_commitment_direction"
+
+    atom_id: Mapped[str] = mapped_column(String(26), ForeignKey("atoms.id"), primary_key=True)
+    direction: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        CheckConstraint(
+            "direction IN ('1ch_to_customer', 'customer_to_1ch',"
+            " '1ch_to_aws', 'aws_to_1ch',"
+            " 'customer_to_aws', 'aws_to_customer', '1ch_internal')",
+            name="ck_wcd_direction",
+        ),
+        Index("idx_wcd_direction", "direction"),
+    )
+
+
+class WorkAskSide(Base):
+    """Work-domain ask side.
+
+    Populated once atoms exist (W3+). Migrated here to keep section 4 complete.
+    """
+
+    __tablename__ = "work_ask_side"
+
+    atom_id: Mapped[str] = mapped_column(String(26), ForeignKey("atoms.id"), primary_key=True)
+    side: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        CheckConstraint(
+            "side IN ('asks_of_aws', 'asks_of_customer', 'asks_of_1cloudhub')",
+            name="ck_was_side",
+        ),
+        Index("idx_was_side", "side"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Section 5: Operational tracking
 # ---------------------------------------------------------------------------
 
@@ -660,4 +749,8 @@ __all__ = [
     "Stakeholder",
     "StateChangeEvidence",
     "TriageItem",
+    "WorkAccountMetadata",
+    "WorkAskSide",
+    "WorkCommitmentDirection",
+    "WorkEngagementMetadata",
 ]

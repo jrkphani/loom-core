@@ -38,6 +38,11 @@ EXPECTED_TABLES = sorted(
         "stakeholders",
         "state_change_evidence",
         "triage_items",
+        # W2 #002-003: section 4 (work projection)
+        "work_account_metadata",
+        "work_ask_side",
+        "work_commitment_direction",
+        "work_engagement_metadata",
     ]
 )
 

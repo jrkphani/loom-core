@@ -65,6 +65,319 @@ async def test_get_engagements_lists_with_filters(
     assert e2_id not in open_ids
 
 
+async def test_get_engagement_by_id_returns_engagement(client: AsyncClient) -> None:
+    """GET /v1/engagements/:id returns 200 with engagement fields + null work_metadata."""
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    assert arena_r.status_code == 201
+    arena_id = arena_r.json()["id"]
+
+    eng_r = await client.post(
+        "/v1/engagements",
+        json={
+            "domain": "work",
+            "arena_id": arena_id,
+            "name": "Wave 1",
+            "type_tag": "delivery_wave",
+        },
+    )
+    assert eng_r.status_code == 201
+    eng_id = eng_r.json()["id"]
+
+    resp = await client.get(f"/v1/engagements/{eng_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == eng_id
+    assert data["domain"] == "work"
+    assert data["arena_id"] == arena_id
+    assert data["name"] == "Wave 1"
+    assert data["ended_at"] is None
+    assert "created_at" in data
+    assert "work_metadata" in data
+    assert data["work_metadata"] is None
+
+
+async def test_get_engagement_by_id_not_found_returns_404(client: AsyncClient) -> None:
+    """GET /v1/engagements/:id with unknown id returns 404 with error envelope."""
+    resp = await client.get("/v1/engagements/01HXXXXXXXXXXXXXXXXXXXXXXX")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "NOT_FOUND"
+
+
+async def test_get_engagement_returns_work_metadata_when_present(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """GET /v1/engagements/:id returns populated work_metadata when a row exists."""
+    from loom_core.storage.models import WorkEngagementMetadata
+
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements", json={"domain": "work", "arena_id": arena_id, "name": "Wave 1"}
+    )
+    eng_id = eng_r.json()["id"]
+
+    meta = WorkEngagementMetadata(
+        engagement_id=eng_id,
+        sow_value=500000.0,
+        sow_currency="SGD",
+        aws_funded=True,
+        aws_program="MAP",
+        swim_lane="p1_existing_customer",
+    )
+    db_session.add(meta)
+    await db_session.commit()
+
+    resp = await client.get(f"/v1/engagements/{eng_id}")
+    assert resp.status_code == 200
+    wm = resp.json()["work_metadata"]
+    assert wm is not None
+    assert wm["sow_value"] == 500000.0
+    assert wm["sow_currency"] == "SGD"
+    assert wm["aws_funded"] is True
+    assert wm["aws_program"] == "MAP"
+    assert wm["swim_lane"] == "p1_existing_customer"
+
+
+async def test_patch_engagement_updates_core_fields(client: AsyncClient) -> None:
+    """PATCH /v1/engagements/:id updates name, type_tag, started_at; persists."""
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements",
+        json={
+            "domain": "work",
+            "arena_id": arena_id,
+            "name": "Wave 1",
+            "type_tag": "delivery_wave",
+        },
+    )
+    eng_id = eng_r.json()["id"]
+
+    patch_resp = await client.patch(
+        f"/v1/engagements/{eng_id}",
+        json={
+            "name": "Wave 1 Renamed",
+            "type_tag": "delivery_wave_pilot",
+            "started_at": "2026-04-01T00:00:00Z",
+        },
+    )
+    assert patch_resp.status_code == 200
+    data = patch_resp.json()
+    assert data["name"] == "Wave 1 Renamed"
+    assert data["type_tag"] == "delivery_wave_pilot"
+    assert data["started_at"] is not None
+    assert data["ended_at"] is None  # close action only — not PATCH
+
+    get_resp = await client.get(f"/v1/engagements/{eng_id}")
+    assert get_resp.json()["name"] == "Wave 1 Renamed"
+
+
+async def test_patch_engagement_updates_work_metadata(client: AsyncClient) -> None:
+    """PATCH upserts work_metadata; partial second patch preserves existing fields."""
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements", json={"domain": "work", "arena_id": arena_id, "name": "Wave 1"}
+    )
+    eng_id = eng_r.json()["id"]
+
+    r1 = await client.patch(
+        f"/v1/engagements/{eng_id}",
+        json={
+            "work_metadata": {
+                "sow_value": 500000.0,
+                "sow_currency": "SGD",
+                "aws_funded": True,
+                "aws_program": "MAP",
+                "swim_lane": "p1_existing_customer",
+            }
+        },
+    )
+    assert r1.status_code == 200
+    wm = r1.json()["work_metadata"]
+    assert wm["sow_value"] == 500000.0
+    assert wm["aws_program"] == "MAP"
+
+    r2 = await client.patch(
+        f"/v1/engagements/{eng_id}",
+        json={"work_metadata": {"aws_program": "PBP"}},
+    )
+    assert r2.status_code == 200
+    wm2 = r2.json()["work_metadata"]
+    assert wm2["aws_program"] == "PBP"
+    assert wm2["sow_value"] == 500000.0  # preserved
+    assert wm2["sow_currency"] == "SGD"  # preserved
+
+    get_r = await client.get(f"/v1/engagements/{eng_id}")
+    assert get_r.json()["work_metadata"]["aws_program"] == "PBP"
+    assert get_r.json()["work_metadata"]["sow_value"] == 500000.0
+
+
+async def test_patch_engagement_with_invalid_swim_lane_returns_422(client: AsyncClient) -> None:
+    """PATCH with invalid swim_lane value returns 422 from Pydantic validation."""
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements", json={"domain": "work", "arena_id": arena_id, "name": "Wave 1"}
+    )
+    eng_id = eng_r.json()["id"]
+
+    resp = await client.patch(
+        f"/v1/engagements/{eng_id}",
+        json={"work_metadata": {"swim_lane": "p99_invalid"}},
+    )
+    assert resp.status_code == 422
+
+
+async def test_post_engagement_close_with_no_open_hypotheses_returns_empty_warnings(
+    client: AsyncClient,
+) -> None:
+    """POST /v1/engagements/:id/close with no hypotheses returns 200 with empty warnings."""
+    from datetime import UTC, datetime
+
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements", json={"domain": "work", "arena_id": arena_id, "name": "Wave 1"}
+    )
+    eng_id = eng_r.json()["id"]
+
+    before = datetime.now(UTC)
+    close_resp = await client.post(f"/v1/engagements/{eng_id}/close")
+    assert close_resp.status_code == 200
+
+    body = close_resp.json()
+    assert body["warnings"] == []
+    assert body["engagement"]["ended_at"] is not None
+    ended_at = datetime.fromisoformat(body["engagement"]["ended_at"])
+    assert ended_at >= before.replace(tzinfo=None)
+
+    get_resp = await client.get(f"/v1/engagements/{eng_id}")
+    assert get_resp.json()["ended_at"] is not None
+
+
+async def test_post_engagement_close_with_open_hypotheses_returns_warnings(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """POST /v1/engagements/:id/close with open hypotheses returns warnings with count."""
+    from ulid import ULID
+
+    from loom_core.storage.models import Hypothesis
+
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements", json={"domain": "work", "arena_id": arena_id, "name": "Wave 1"}
+    )
+    eng_id = eng_r.json()["id"]
+
+    # Insert two open hypotheses directly via db_session.
+    for _ in range(2):
+        h = Hypothesis(
+            id=str(ULID()),
+            domain="work",
+            arena_id=arena_id,
+            engagement_id=eng_id,
+            layer="engagement",
+            title="Test hypothesis",
+            current_progress="proposed",
+            current_confidence="medium",
+            current_momentum="steady",
+            confidence_inferred=True,
+            momentum_inferred=True,
+        )
+        db_session.add(h)
+    await db_session.commit()
+
+    close_resp = await client.post(f"/v1/engagements/{eng_id}/close")
+    assert close_resp.status_code == 200
+
+    body = close_resp.json()
+    assert body["warnings"] == [{"open_hypotheses": 2}]
+    assert body["engagement"]["ended_at"] is not None
+
+
+async def test_post_engagement_close_on_closed_engagement_returns_409(
+    client: AsyncClient,
+) -> None:
+    """POST /v1/engagements/:id/close on an already-ended engagement returns 409."""
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements", json={"domain": "work", "arena_id": arena_id, "name": "Wave 1"}
+    )
+    eng_id = eng_r.json()["id"]
+
+    first = await client.post(f"/v1/engagements/{eng_id}/close")
+    assert first.status_code == 200
+
+    second = await client.post(f"/v1/engagements/{eng_id}/close")
+    assert second.status_code == 409
+    assert second.json()["detail"]["error"] == "CONFLICT"
+
+
+async def test_post_engagement_close_with_force_closes_with_open_hypotheses(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Force-close with override_reason succeeds even with open hypotheses."""
+    from ulid import ULID
+
+    from loom_core.storage.models import Hypothesis
+
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements", json={"domain": "work", "arena_id": arena_id, "name": "Wave 1"}
+    )
+    eng_id = eng_r.json()["id"]
+
+    h = Hypothesis(
+        id=str(ULID()),
+        domain="work",
+        arena_id=arena_id,
+        engagement_id=eng_id,
+        layer="engagement",
+        title="Pending hypothesis",
+        current_progress="proposed",
+        current_confidence="medium",
+        current_momentum="steady",
+        confidence_inferred=True,
+        momentum_inferred=True,
+    )
+    db_session.add(h)
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/v1/engagements/{eng_id}/close",
+        json={
+            "force": True,
+            "override_reason": "Customer terminated SOW; closing with one open hypothesis pending re-scoping.",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["engagement"]["ended_at"] is not None
+    assert body["warnings"] == [{"open_hypotheses": 1}]
+
+
+async def test_post_engagement_close_with_force_without_override_reason_returns_422(
+    client: AsyncClient,
+) -> None:
+    """Force=True without override_reason is rejected at Pydantic validation (422)."""
+    arena_r = await client.post("/v1/arenas", json={"domain": "work", "name": "Corp"})
+    arena_id = arena_r.json()["id"]
+    eng_r = await client.post(
+        "/v1/engagements", json={"domain": "work", "arena_id": arena_id, "name": "Wave 1"}
+    )
+    eng_id = eng_r.json()["id"]
+
+    resp = await client.post(
+        f"/v1/engagements/{eng_id}/close",
+        json={"force": True},
+    )
+    assert resp.status_code == 422
+
+
 async def test_post_engagements_with_invalid_arena_returns_404(client: AsyncClient) -> None:
     """POST /v1/engagements with a non-existent arena_id returns 404."""
     response = await client.post(

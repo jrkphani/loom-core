@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom_core.api._deps import get_audience, get_session
-from loom_core.storage.visibility import Audience
 from loom_core.services.arenas import (
     ArenaAlreadyClosedError,
     close_arena,
@@ -22,6 +21,7 @@ from loom_core.services.arenas import (
     list_arenas,
     update_arena,
 )
+from loom_core.storage.visibility import Audience
 
 router = APIRouter(tags=["arenas"])
 
@@ -115,7 +115,9 @@ async def get_arenas(
     include_closed: bool = False,
 ) -> ArenaList:
     """List arenas, optionally including closed ones."""
-    rows = await list_arenas(session, audience=audience, domain=domain, include_closed=include_closed)
+    rows = await list_arenas(
+        session, audience=audience, domain=domain, include_closed=include_closed
+    )
     items = []
     for arena in rows:
         result = await get_arena(session, arena.id, audience=audience)

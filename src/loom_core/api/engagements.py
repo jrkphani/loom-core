@@ -13,7 +13,6 @@ from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom_core.api._deps import get_audience, get_session
-from loom_core.storage.visibility import Audience
 from loom_core.services.engagements import (
     ArenaNotFoundError,
     EngagementAlreadyClosedError,
@@ -23,6 +22,7 @@ from loom_core.services.engagements import (
     list_engagements,
     update_engagement,
 )
+from loom_core.storage.visibility import Audience
 
 router = APIRouter(tags=["engagements"])
 
@@ -169,7 +169,9 @@ async def get_engagements(
     closed: bool | None = None,
 ) -> EngagementList:
     """List engagements with optional filters."""
-    rows = await list_engagements(session, audience=audience, domain=domain, arena_id=arena_id, closed=closed)
+    rows = await list_engagements(
+        session, audience=audience, domain=domain, arena_id=arena_id, closed=closed
+    )
     items = []
     for eng in rows:
         result = await get_engagement(session, eng.id, audience=audience)

@@ -30,14 +30,18 @@ curl http://127.0.0.1:9100/v1/health
 
 ## Verification gates
 
-A task is not complete until **all four** pass with zero errors:
+A task is not complete until **all six** pass with zero errors:
 
 ```bash
 uv run ruff check
 uv run ruff format --check
 uv run mypy --strict
 uv run pytest
+uv run pytest -m visibility    # explicit visibility regression run (#079)
+uv run alembic check           # ORM models match migration head
 ```
+
+The `pytest -m visibility` run is redundant with the broader `pytest` run (which includes the marked tests by default), but invoking it explicitly catches a regression where a new visibility test is added without the marker — the marker-only run would surface a missing test or a wrong count.
 
 ## Layout
 

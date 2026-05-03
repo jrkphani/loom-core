@@ -33,7 +33,6 @@ from loom_core.services.hypotheses import (
     list_state_history,
     list_state_proposals,
     override_state_proposal,
-    update_hypothesis,
 )
 from loom_core.storage.models import (
     Arena,

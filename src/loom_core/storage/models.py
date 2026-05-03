@@ -53,7 +53,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from loom_core.storage.session import Base
 
@@ -400,6 +400,10 @@ class Atom(Base):
     retraction_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
+    commitment_details: Mapped[AtomCommitmentDetails | None] = relationship(
+        back_populates="atom", uselist=False, cascade="all, delete-orphan"
+    )
+
     __table_args__ = (
         CheckConstraint(
             "type IN ('decision', 'commitment', 'ask', 'risk', 'status_update')",
@@ -474,6 +478,8 @@ class AtomCommitmentDetails(Base):
     status_last_changed_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.current_timestamp()
     )
+
+    atom: Mapped[Atom] = relationship(back_populates="commitment_details")
 
     __table_args__ = (
         CheckConstraint(

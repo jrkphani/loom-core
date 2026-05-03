@@ -100,3 +100,28 @@ async def test_finish_processor_run_updates_completion_fields(
     assert finished.completed_at is not None
     assert finished.items_processed == 3
     assert finished.items_failed == 1
+    assert finished.success is True
+
+
+# ---------------------------------------------------------------------------
+# B8 (TDD): finish_processor_run accepts explicit success=False
+# ---------------------------------------------------------------------------
+
+
+async def test_finish_processor_run_with_explicit_success_false(
+    svc_session: AsyncSession,
+) -> None:
+    """finish_processor_run must accept success=False and persist it."""
+    run = await start_processor_run(svc_session, pipeline="inbox_sweep")
+    run_id = run.id
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session2:
+        finished = await finish_processor_run(
+            session2, run_id, items_processed=0, items_failed=5, success=False
+        )
+        await session2.commit()
+
+    assert finished is not None
+    assert finished.success is False
+    assert finished.items_failed == 5

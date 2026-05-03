@@ -16,6 +16,7 @@ from loom_core.storage.models import (
     HypothesisStateChange,
     TriageItem,
 )
+from loom_core.storage.visibility import Audience, visibility_predicate
 
 
 class ArenaNotFoundError(Exception):
@@ -108,14 +109,25 @@ async def create_hypothesis(
 async def get_hypothesis(
     session: AsyncSession,
     hypothesis_id: str,
+    *,
+    audience: Audience,
 ) -> Hypothesis | None:
-    """Return a hypothesis by ID, or None if not found."""
-    return await session.get(Hypothesis, hypothesis_id)
+    """Return a hypothesis by ID, filtered by visibility, or None if not found/visible."""
+    stmt = (
+        select(Hypothesis)
+        .where(Hypothesis.id == hypothesis_id)
+        .where(
+            visibility_predicate(Hypothesis.visibility_scope, "hypothesis", Hypothesis.id, audience)
+        )
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def list_hypotheses(
     session: AsyncSession,
     *,
+    audience: Audience,
     engagement_id: str | None = None,
     arena_id: str | None = None,
     layer: str | None = None,
@@ -124,14 +136,17 @@ async def list_hypotheses(
 
     Args:
         session: Active async database session.
+        audience: Who the query is for (drives visibility filtering).
         engagement_id: Filter by engagement.
         arena_id: Filter by arena.
         layer: Filter by layer (``"engagement"`` or ``"arena"``).
 
     Returns:
-        Sequence of matching :class:`Hypothesis` rows.
+        Sequence of visible :class:`Hypothesis` rows.
     """
-    stmt = select(Hypothesis)
+    stmt = select(Hypothesis).where(
+        visibility_predicate(Hypothesis.visibility_scope, "hypothesis", Hypothesis.id, audience)
+    )
 
     if engagement_id is not None:
         stmt = stmt.where(Hypothesis.engagement_id == engagement_id)
@@ -178,14 +193,22 @@ async def list_state_history(
     session: AsyncSession,
     hypothesis_id: str,
     *,
+    audience: Audience,
     dimension: str | None = None,
 ) -> Sequence[HypothesisStateChange] | None:
     """Return state change rows for a hypothesis, ordered by changed_at DESC.
 
-    Returns None if the hypothesis does not exist (route maps to 404). Otherwise
-    returns all rows, optionally filtered to a single dimension.
+    Returns None if the hypothesis does not exist or is not visible (route maps to 404).
+    Otherwise returns all rows, optionally filtered to a single dimension.
     """
-    hypothesis = await session.get(Hypothesis, hypothesis_id)
+    hypothesis_stmt = (
+        select(Hypothesis)
+        .where(Hypothesis.id == hypothesis_id)
+        .where(
+            visibility_predicate(Hypothesis.visibility_scope, "hypothesis", Hypothesis.id, audience)
+        )
+    )
+    hypothesis = (await session.execute(hypothesis_stmt)).scalar_one_or_none()
     if hypothesis is None:
         return None
 
@@ -200,15 +223,24 @@ async def list_state_history(
 async def list_state_proposals(
     session: AsyncSession,
     hypothesis_id: str,
+    *,
+    audience: Audience,
 ) -> Sequence[TriageItem] | None:
     """Return pending state-change proposal triage items for a hypothesis.
 
-    Returns None if the hypothesis does not exist (route maps to 404). Otherwise
-    returns triage_items rows where item_type='state_change_proposal',
+    Returns None if the hypothesis does not exist or is not visible (route maps to 404).
+    Otherwise returns triage_items rows where item_type='state_change_proposal',
     related_entity_id=hypothesis_id, and resolved_at IS NULL, ordered by
     surfaced_at DESC.
     """
-    hypothesis = await session.get(Hypothesis, hypothesis_id)
+    hypothesis_stmt = (
+        select(Hypothesis)
+        .where(Hypothesis.id == hypothesis_id)
+        .where(
+            visibility_predicate(Hypothesis.visibility_scope, "hypothesis", Hypothesis.id, audience)
+        )
+    )
+    hypothesis = (await session.execute(hypothesis_stmt)).scalar_one_or_none()
     if hypothesis is None:
         return None
 

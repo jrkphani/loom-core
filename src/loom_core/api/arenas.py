@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom_core.api._deps import get_session
+from loom_core.api._deps import get_audience, get_session
+from loom_core.storage.visibility import Audience
 from loom_core.services.arenas import (
     ArenaAlreadyClosedError,
     close_arena,
@@ -109,14 +110,15 @@ async def post_arenas(
 @router.get("/arenas", response_model=ArenaList)
 async def get_arenas(
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
     domain: str = "work",
     include_closed: bool = False,
 ) -> ArenaList:
     """List arenas, optionally including closed ones."""
-    rows = await list_arenas(session, domain=domain, include_closed=include_closed)
+    rows = await list_arenas(session, audience=audience, domain=domain, include_closed=include_closed)
     items = []
     for arena in rows:
-        result = await get_arena(session, arena.id)
+        result = await get_arena(session, arena.id, audience=audience)
         if result is None:
             continue
         a, meta = result
@@ -130,9 +132,10 @@ async def get_arenas(
 async def get_arena_by_id(
     arena_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
 ) -> ArenaRead:
     """Get a single arena by ID."""
-    result = await get_arena(session, arena_id)
+    result = await get_arena(session, arena_id, audience=audience)
     if result is None:
         raise HTTPException(
             status_code=404,

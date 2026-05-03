@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator
 from fastapi import HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loom_core.storage.visibility import Audience
+
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     """Yield an AsyncSession, committing on success or rolling back on error.
@@ -24,3 +26,13 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def get_audience(request: Request) -> Audience:
+    """Derive the audience for the current request.
+
+    Currently returns a self-audience. In the future, this will inspect the
+    request identity/headers to construct the correct Audience instance for
+    stakeholder-facing endpoints.
+    """
+    return Audience.for_self()

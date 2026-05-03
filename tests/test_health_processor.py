@@ -47,6 +47,7 @@ async def test_get_health_processor_returns_last_inbox_sweep_run(
     summary = data["pipelines"]["inbox_sweep"]
     assert summary["items_processed"] == 5
     assert summary["items_failed"] == 1
+    assert summary["success"] is True
     assert summary["completed_at"] is not None
 
 

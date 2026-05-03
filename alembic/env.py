@@ -33,6 +33,36 @@ config.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{settings.core.db
 target_metadata = Base.metadata
 
 
+def include_object(
+    object_: object,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: object,
+) -> bool:
+    """Filter callback for autogenerate / alembic check.
+
+    Expression indexes — those declared with ``text("col DESC")`` or similar
+    SQL clauses inside ``Index(...)`` — cannot be reliably round-tripped from
+    ``sqlite_master`` by SQLAlchemy autogenerate. Each one produces a noisy
+    "Generating approximate signature for index" warning and a false drift
+    diff on every ``alembic check`` run. Skip them here; expression indexes
+    must be hand-rolled in migration files (see W1/W2 + Phase 1 patterns
+    using ``op.create_index(..., sqlite_where=sa.text(...))``.
+
+    All other objects (tables, columns, plain indexes, constraints) flow
+    through unchanged.
+    """
+    from sqlalchemy import Index
+    from sqlalchemy.sql.elements import TextClause
+
+    if type_ == "index" and isinstance(object_, Index):
+        for expr in object_.expressions:
+            if isinstance(expr, TextClause):
+                return False
+    return True
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode — emits SQL to a file/stdout, no DB connection."""
     url = config.get_main_option("sqlalchemy.url")
@@ -42,6 +72,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,  # SQLite-friendly DDL
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -53,6 +84,7 @@ def do_run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         render_as_batch=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
 from loom_core.storage.models import Arena, WorkAccountMetadata
+from loom_core.storage.visibility import Audience
 
 
 class ArenaAlreadyClosedError(Exception):
@@ -19,8 +20,16 @@ class ArenaAlreadyClosedError(Exception):
 async def get_arena(
     session: AsyncSession,
     arena_id: str,
+    *,
+    audience: Audience,
 ) -> tuple[Arena, WorkAccountMetadata | None] | None:
-    """Return (arena, metadata_or_None), or None if the arena does not exist."""
+    """Return (arena, metadata_or_None), or None if the arena does not exist.
+
+    Args:
+        session: Active async database session.
+        arena_id: The ID of the arena to fetch.
+        audience: Documentary parameter for future visibility filtering.
+    """
     arena = await session.get(Arena, arena_id)
     if arena is None:
         return None
@@ -145,6 +154,7 @@ async def close_arena(
 async def list_arenas(
     session: AsyncSession,
     *,
+    audience: Audience,
     domain: str,
     include_closed: bool = False,
 ) -> Sequence[Arena]:
@@ -152,6 +162,7 @@ async def list_arenas(
 
     Args:
         session: Active async database session.
+        audience: Documentary parameter for future visibility filtering.
         domain: Domain to scope the query.
         include_closed: If False (default), exclude arenas where closed_at IS NOT NULL.
 

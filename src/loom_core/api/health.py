@@ -58,6 +58,7 @@ class PipelineRunSummary(BaseModel):
     completed_at: datetime | None
     items_processed: int | None
     items_failed: int | None
+    success: bool
 
 
 class HealthProcessorResponse(BaseModel):
@@ -79,6 +80,7 @@ async def get_health_processor(
                 completed_at=run.completed_at,
                 items_processed=run.items_processed,
                 items_failed=run.items_failed,
+                success=run.success,
             )
             for name, run in latest.items()
         }

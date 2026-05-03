@@ -114,4 +114,6 @@ addopts = "-ra --strict-markers"
 markers = [
     "integration: marks integration tests (requires temp filesystem)",
     "external: marks tests that hit real external services (default skipped)",
+    "visibility: marks visibility-filter regression tests (#079)",
+    "operations_log: marks operations-log replay tests (#089)",
 ]

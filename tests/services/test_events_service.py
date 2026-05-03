@@ -14,9 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom_core.api._deps import get_session
 from loom_core.main import app
-from loom_core.services.events import create_event, list_events
+from loom_core.services.events import create_event, get_event, list_events
 from loom_core.storage.models import Event
 from loom_core.storage.session import create_engine, create_session_factory
+from loom_core.storage.visibility import Audience
 
 
 @pytest.fixture
@@ -147,14 +148,41 @@ async def test_list_events_filters_and_orders_by_occurred_at_desc(
     await svc_session.commit()
 
     async with app.state.session_factory() as session2:
-        all_rows = await list_events(session2, domain="work")
+        all_rows = await list_events(session2, domain="work", audience=Audience.for_self())
 
     assert len(all_rows) == 3
     assert [r.id for r in all_rows] == [e3.id, e2.id, e1.id]
 
     async with app.state.session_factory() as session3:
-        process_rows = await list_events(session3, domain="work", event_type="process")
+        process_rows = await list_events(
+            session3, domain="work", audience=Audience.for_self(), event_type="process"
+        )
 
     assert len(process_rows) == 2
     assert all(r.type == "process" for r in process_rows)
     assert [r.id for r in process_rows] == [e3.id, e1.id]
+
+
+async def test_get_event_honours_audience(
+    svc_session: AsyncSession,
+) -> None:
+    """get_event filters out events not visible to the audience."""
+    e1 = Event(
+        id="01HW0000000000000000000004",
+        domain="work",
+        type="process",
+        occurred_at=datetime(2026, 4, 1, 10, 0, tzinfo=UTC),
+        visibility_scope="private",
+    )
+    svc_session.add(e1)
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session2:
+        # Self audience sees private
+        ev = await get_event(session2, e1.id, audience=Audience.for_self())
+        assert ev is not None
+
+        # Stakeholder audience does not see private
+        sh_audience = Audience.for_stakeholders(["SH_1"])
+        ev_sh = await get_event(session2, e1.id, audience=sh_audience)
+        assert ev_sh is None

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom_core.api._deps import get_session
+from loom_core.api._deps import get_audience, get_session
 from loom_core.services.hypotheses import (
     ArenaNotFoundError,
     EngagementNotFoundError,
@@ -31,6 +31,7 @@ from loom_core.services.hypotheses import (
     override_state_proposal,
     update_hypothesis,
 )
+from loom_core.storage.visibility import Audience
 
 router = APIRouter(tags=["hypotheses"])
 
@@ -271,6 +272,7 @@ async def post_hypotheses(
 @router.get("/hypotheses", response_model=HypothesisList)
 async def get_hypotheses(
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
     engagement_id: str | None = None,
     arena_id: str | None = None,
     layer: Literal["arena", "engagement"] | None = None,
@@ -285,7 +287,7 @@ async def get_hypotheses(
             },
         )
     rows = await list_hypotheses(
-        session, engagement_id=engagement_id, arena_id=arena_id, layer=layer
+        session, audience=audience, engagement_id=engagement_id, arena_id=arena_id, layer=layer
     )
     return HypothesisList(hypotheses=[HypothesisRead.model_validate(h) for h in rows])
 
@@ -294,9 +296,10 @@ async def get_hypotheses(
 async def get_hypothesis_by_id(
     hypothesis_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
 ) -> HypothesisRead:
     """Get a single hypothesis by ID."""
-    hypothesis = await get_hypothesis(session, hypothesis_id)
+    hypothesis = await get_hypothesis(session, hypothesis_id, audience=audience)
     if hypothesis is None:
         raise HTTPException(
             status_code=404,
@@ -312,9 +315,10 @@ async def get_hypothesis_by_id(
 async def get_hypothesis_state(
     hypothesis_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
 ) -> HypothesisStateRead:
     """Return the current 3-dimensional state of a hypothesis."""
-    hypothesis = await get_hypothesis(session, hypothesis_id)
+    hypothesis = await get_hypothesis(session, hypothesis_id, audience=audience)
     if hypothesis is None:
         raise HTTPException(
             status_code=404,
@@ -339,10 +343,11 @@ async def get_hypothesis_state(
 async def get_hypothesis_state_history(
     hypothesis_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
     dimension: Literal["progress", "confidence", "momentum"] | None = None,
 ) -> HypothesisStateHistoryList:
     """Return the audit log of state changes for a hypothesis, ordered by changed_at DESC."""
-    rows = await list_state_history(session, hypothesis_id, dimension=dimension)
+    rows = await list_state_history(session, hypothesis_id, audience=audience, dimension=dimension)
     if rows is None:
         raise HTTPException(
             status_code=404,
@@ -360,10 +365,11 @@ async def get_hypothesis_state_history(
 async def get_hypothesis_state_proposals(
     hypothesis_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
 ) -> StateChangeProposalList:
     """Return pending state-change proposals (triage items) for a hypothesis."""
     # TODO(W5): add ?dimension filter once triage_items encodes dimension in context_summary
-    rows = await list_state_proposals(session, hypothesis_id)
+    rows = await list_state_proposals(session, hypothesis_id, audience=audience)
     if rows is None:
         raise HTTPException(
             status_code=404,

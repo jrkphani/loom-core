@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
 from loom_core.storage.models import Arena, Engagement, Hypothesis, WorkEngagementMetadata
+from loom_core.storage.visibility import Audience
 
 log = structlog.get_logger()
 
@@ -26,8 +27,16 @@ class EngagementAlreadyClosedError(Exception):
 async def get_engagement(
     session: AsyncSession,
     engagement_id: str,
+    *,
+    audience: Audience,
 ) -> tuple[Engagement, WorkEngagementMetadata | None] | None:
-    """Return (engagement, metadata_or_None), or None if not found."""
+    """Return (engagement, metadata_or_None), or None if not found.
+
+    Args:
+        session: Active async database session.
+        engagement_id: ULID of the engagement to fetch.
+        audience: Documentary parameter for future visibility filtering.
+    """
     engagement = await session.get(Engagement, engagement_id)
     if engagement is None:
         return None
@@ -203,6 +212,7 @@ async def close_engagement(
 async def list_engagements(
     session: AsyncSession,
     *,
+    audience: Audience,
     domain: str,
     arena_id: str | None = None,
     closed: bool | None = None,
@@ -211,6 +221,7 @@ async def list_engagements(
 
     Args:
         session: Active async database session.
+        audience: Documentary parameter for future visibility filtering.
         domain: Domain to scope the query.
         arena_id: Optional arena filter.
         closed: If ``False``, exclude rows where ``ended_at IS NOT NULL``.

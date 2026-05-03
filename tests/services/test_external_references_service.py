@@ -19,10 +19,13 @@ from loom_core.services.external_references import (
     AtomNotFoundError,
     ExternalReferenceNotFoundError,
     create_external_reference,
+    get_external_reference,
     link_atom_to_external_ref,
+    list_atom_external_refs,
 )
 from loom_core.storage.models import Atom, AtomExternalRef, Event
 from loom_core.storage.session import create_engine, create_session_factory
+from loom_core.storage.visibility import Audience
 
 
 @pytest.fixture
@@ -289,3 +292,71 @@ async def test_link_atom_to_external_ref_duplicate_returns_existing_with_created
             .all()
         )
     assert len(rows) == 1
+
+
+async def test_get_external_reference_honours_audience(
+    svc_session: AsyncSession,
+) -> None:
+    """get_external_reference filters out refs not visible to the audience."""
+    ref, _ = await create_external_reference(
+        svc_session, ref_type="url", ref_value="https://private.com"
+    )
+    ref.visibility_scope = "private"
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session2:
+        # Self audience sees private
+        ev = await get_external_reference(session2, ref.id, audience=Audience.for_self())
+        assert ev is not None
+
+        # Stakeholder audience does not see private
+        sh_audience = Audience.for_stakeholders(["SH_1"])
+        ev_sh = await get_external_reference(session2, ref.id, audience=sh_audience)
+        assert ev_sh is None
+
+
+async def test_list_atom_external_refs_honours_audience(
+    svc_session: AsyncSession,
+) -> None:
+    """list_atom_external_refs requires both Atom and ExternalReference to be visible."""
+    event_id = await _insert_event(svc_session)
+    atom_id = await _insert_atom(svc_session, event_id=event_id)
+    ref1, _ = await create_external_reference(
+        svc_session, ref_type="url", ref_value="https://public.com"
+    )
+    ref1.visibility_scope = "domain_wide"
+    ref2, _ = await create_external_reference(
+        svc_session, ref_type="url", ref_value="https://private.com"
+    )
+    ref2.visibility_scope = "private"
+
+    atom = await svc_session.get(Atom, atom_id)
+    assert atom is not None
+    atom.visibility_scope = "domain_wide"
+
+    await link_atom_to_external_ref(svc_session, atom_id=atom_id, external_ref_id=ref1.id)
+    await link_atom_to_external_ref(svc_session, atom_id=atom_id, external_ref_id=ref2.id)
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session2:
+        # Self audience sees both
+        refs = await list_atom_external_refs(session2, atom_id, audience=Audience.for_self())
+        assert refs is not None
+        assert len(refs) == 2
+
+        # Stakeholder audience sees only public
+        sh_audience = Audience.for_stakeholders(["SH_1"])
+        refs_sh = await list_atom_external_refs(session2, atom_id, audience=sh_audience)
+        assert refs_sh is not None
+        assert len(refs_sh) == 1
+        assert refs_sh[0].id == ref1.id
+
+    # Make atom private, stakeholder should get None
+    atom = await svc_session.get(Atom, atom_id)
+    assert atom is not None
+    atom.visibility_scope = "private"
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session3:
+        refs_sh_hidden = await list_atom_external_refs(session3, atom_id, audience=sh_audience)
+        assert refs_sh_hidden is None

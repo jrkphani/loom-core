@@ -2,7 +2,7 @@
 
 W1 lands schema sections 1 (universal core) + 5 (operational tracking) per PRD §7.
 
-Tables defined here (21 total):
+Tables defined here (31 total):
   Section 1 — Universal core (18 tables):
     domains, arenas, engagements, hypotheses, hypothesis_state_changes,
     state_change_evidence, stakeholders, events, atoms,
@@ -16,8 +16,17 @@ Tables defined here (21 total):
   Deferred to later workstreams (sections 2, 3, 4):
     entity_pages, tags, entity_tags  (section 2 — knowledge graph mirror)
     migration_records                (section 3 — migration tracking)
-    work_account_metadata, work_engagement_metadata, work_stakeholder_roles,
+    work_account_metadata, work_engagement_metadata,
     work_commitment_direction, work_ask_side  (section 4 — work projection)
+
+v0.8 alignment additions (#076):
+  Cross-cutting columns on entity tables (visibility_scope, retention_tier,
+  projection_at_creation per blueprint §6.4 / §12.6 / §4).
+  Inference metadata on atoms, hypothesis_state_changes, brief_runs.
+  Retraction columns on atoms; audience profile on stakeholders.
+  ProcessorRun.success column folded in from #009.
+  New tables: entity_visibility_members, stakeholder_roles,
+  atom_contributions, resources, resource_attributions, asset_uses.
 
 Schema is locked in loom-meta/docs/loom-schema-v1.sql. Models must mirror it
 exactly; deviations require an RFC.
@@ -82,6 +91,9 @@ class Arena(Base):
     domain: Mapped[str] = mapped_column(String(26), ForeignKey("domains.id"))
     name: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
+    projection_at_creation: Mapped[str] = mapped_column(
+        Text, server_default="'work-cro-1cloudhub-v1'"
+    )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
@@ -103,11 +115,20 @@ class Engagement(Base):
     type_tag: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime)
+    retention_tier: Mapped[str] = mapped_column(Text, server_default="'operational'")
+    projection_at_creation: Mapped[str] = mapped_column(
+        Text, server_default="'work-cro-1cloudhub-v1'"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
     __table_args__ = (
+        CheckConstraint(
+            "retention_tier IN ('operational', 'archive_soon', 'archived', 'purge_eligible')",
+            name="ck_engagements_retention_tier",
+        ),
         Index("idx_engagements_arena", "arena_id", "ended_at"),
         Index("idx_engagements_domain", "domain", "ended_at"),
+        Index("idx_engagements_retention", "retention_tier"),
     )
 
 
@@ -139,6 +160,11 @@ class Hypothesis(Base):
     momentum_last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     confidence_inferred: Mapped[bool] = mapped_column(Boolean, server_default="1")
     momentum_inferred: Mapped[bool] = mapped_column(Boolean, server_default="1")
+    visibility_scope: Mapped[str] = mapped_column(Text, server_default="'private'")
+    retention_tier: Mapped[str] = mapped_column(Text, server_default="'operational'")
+    projection_at_creation: Mapped[str] = mapped_column(
+        Text, server_default="'work-cro-1cloudhub-v1'"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
@@ -161,9 +187,18 @@ class Hypothesis(Base):
             " OR (layer = 'engagement' AND engagement_id IS NOT NULL)",
             name="ck_hypotheses_layer_engagement",
         ),
+        CheckConstraint(
+            "visibility_scope IN ('domain_wide', 'engagement_scoped', 'stakeholder_set', 'private')",
+            name="ck_hypotheses_visibility_scope",
+        ),
+        CheckConstraint(
+            "retention_tier IN ('operational', 'archive_soon', 'archived', 'purge_eligible')",
+            name="ck_hypotheses_retention_tier",
+        ),
         Index("idx_hypotheses_arena", "arena_id", "layer", "closed_at"),
         Index("idx_hypotheses_engagement", "engagement_id", "closed_at"),
         Index("idx_hypotheses_domain", "domain", "layer"),
+        Index("idx_hypotheses_retention", "retention_tier"),
     )
 
 
@@ -185,6 +220,9 @@ class HypothesisStateChange(Base):
     changed_by: Mapped[str] = mapped_column(Text)
     reasoning: Mapped[str | None] = mapped_column(Text)
     override_reason: Mapped[str | None] = mapped_column(Text)
+    inference_provider: Mapped[str | None] = mapped_column(Text)
+    inference_model_version: Mapped[str | None] = mapped_column(Text)
+    inference_skill_version: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         CheckConstraint(
@@ -230,9 +268,18 @@ class Stakeholder(Base):
     primary_email: Mapped[str | None] = mapped_column(Text, unique=True)
     aliases: Mapped[list[str] | None] = mapped_column(JSON)
     organization: Mapped[str | None] = mapped_column(Text)
+    audience_schema: Mapped[str | None] = mapped_column(Text)
+    preferred_depth: Mapped[str | None] = mapped_column(Text)
+    preferred_channel: Mapped[str | None] = mapped_column(Text)
+    tone_notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
     __table_args__ = (
+        CheckConstraint(
+            "audience_schema IS NULL OR audience_schema IN"
+            " ('executive', 'technical', 'aws_partner', 'customer_sponsor', 'visual')",
+            name="ck_stakeholders_audience_schema",
+        ),
         Index("idx_stakeholders_name", text("canonical_name COLLATE NOCASE")),
         Index("idx_stakeholders_email", "primary_email"),
     )
@@ -250,6 +297,11 @@ class Event(Base):
     source_path: Mapped[str | None] = mapped_column(Text)
     source_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     body_summary: Mapped[str | None] = mapped_column(Text)
+    visibility_scope: Mapped[str] = mapped_column(Text, server_default="'private'")
+    retention_tier: Mapped[str] = mapped_column(Text, server_default="'operational'")
+    projection_at_creation: Mapped[str] = mapped_column(
+        Text, server_default="'work-cro-1cloudhub-v1'"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
     __table_args__ = (
@@ -258,8 +310,17 @@ class Event(Base):
             " 'research', 'publication', 'external_reference')",
             name="ck_events_type",
         ),
+        CheckConstraint(
+            "visibility_scope IN ('domain_wide', 'engagement_scoped', 'stakeholder_set', 'private')",
+            name="ck_events_visibility_scope",
+        ),
+        CheckConstraint(
+            "retention_tier IN ('operational', 'archive_soon', 'archived', 'purge_eligible')",
+            name="ck_events_retention_tier",
+        ),
         Index("idx_events_domain", "domain", text("occurred_at DESC")),
         Index("idx_events_type", "type", text("occurred_at DESC")),
+        Index("idx_events_retention", "retention_tier"),
     )
 
 
@@ -273,13 +334,29 @@ class Artifact(Base):
     name: Mapped[str] = mapped_column(Text)
     type_tag: Mapped[str | None] = mapped_column(Text)
     parent_artifact_id: Mapped[str | None] = mapped_column(String(26), ForeignKey("artifacts.id"))
+    visibility_scope: Mapped[str] = mapped_column(Text, server_default="'private'")
+    retention_tier: Mapped[str] = mapped_column(Text, server_default="'operational'")
+    projection_at_creation: Mapped[str] = mapped_column(
+        Text, server_default="'work-cro-1cloudhub-v1'"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
     last_modified_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp()
     )
     abandoned_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    __table_args__ = (Index("idx_artifacts_domain", "domain", text("last_modified_at DESC")),)
+    __table_args__ = (
+        CheckConstraint(
+            "visibility_scope IN ('domain_wide', 'engagement_scoped', 'stakeholder_set', 'private')",
+            name="ck_artifacts_visibility_scope",
+        ),
+        CheckConstraint(
+            "retention_tier IN ('operational', 'archive_soon', 'archived', 'purge_eligible')",
+            name="ck_artifacts_retention_tier",
+        ),
+        Index("idx_artifacts_domain", "domain", text("last_modified_at DESC")),
+        Index("idx_artifacts_retention", "retention_tier"),
+    )
 
 
 class Atom(Base):
@@ -307,6 +384,20 @@ class Atom(Base):
     dismissed: Mapped[bool] = mapped_column(Boolean, server_default="0")
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime)
     dismissal_reason: Mapped[str | None] = mapped_column(Text)
+    visibility_scope: Mapped[str] = mapped_column(Text, server_default="'private'")
+    retention_tier: Mapped[str] = mapped_column(Text, server_default="'operational'")
+    projection_at_creation: Mapped[str] = mapped_column(
+        Text, server_default="'work-cro-1cloudhub-v1'"
+    )
+    extractor_provider: Mapped[str | None] = mapped_column(Text)
+    extractor_model_version: Mapped[str | None] = mapped_column(Text)
+    extractor_skill_version: Mapped[str | None] = mapped_column(Text)
+    extraction_confidence: Mapped[float | None] = mapped_column(Float)
+    source_span_start: Mapped[int | None] = mapped_column(Integer)
+    source_span_end: Mapped[int | None] = mapped_column(Integer)
+    retracted: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    retracted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    retraction_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
     __table_args__ = (
@@ -315,12 +406,30 @@ class Atom(Base):
             name="ck_atoms_type",
         ),
         CheckConstraint(
+            "extractor_provider IS NULL OR extractor_provider IN"
+            " ('python_rules', 'embeddings', 'apple_fm', 'claude_api', 'human')",
+            name="ck_atoms_extractor_provider",
+        ),
+        CheckConstraint(
+            "retraction_reason IS NULL OR retraction_reason IN"
+            " ('hallucination', 'wrong_extraction', 'stale_source', 'corrected_on_review')",
+            name="ck_atoms_retraction_reason",
+        ),
+        CheckConstraint(
             "confidence_sort_key BETWEEN 0 AND 1",
             name="ck_atoms_confidence_sort_key",
         ),
         CheckConstraint(
             "event_id IS NOT NULL OR artifact_id IS NOT NULL",
             name="ck_atoms_source",
+        ),
+        CheckConstraint(
+            "visibility_scope IN ('domain_wide', 'engagement_scoped', 'stakeholder_set', 'private')",
+            name="ck_atoms_visibility_scope",
+        ),
+        CheckConstraint(
+            "retention_tier IN ('operational', 'archive_soon', 'archived', 'purge_eligible')",
+            name="ck_atoms_retention_tier",
         ),
         Index("idx_atoms_event", "event_id"),
         Index("idx_atoms_artifact", "artifact_id"),
@@ -346,6 +455,8 @@ class Atom(Base):
             unique=True,
             sqlite_where=text("artifact_id IS NOT NULL"),
         ),
+        Index("idx_atoms_retention", "retention_tier"),
+        Index("idx_atoms_retracted", "retracted", sqlite_where=text("retracted = 1")),
     )
 
 
@@ -496,16 +607,27 @@ class ArtifactVersion(Base):
     artifact_id: Mapped[str] = mapped_column(String(26), ForeignKey("artifacts.id"))
     version_number: Mapped[int] = mapped_column(Integer)
     content_path: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
     authorship: Mapped[str | None] = mapped_column(Text)
+    visibility_scope: Mapped[str] = mapped_column(Text, server_default="'private'")
+    retention_tier: Mapped[str] = mapped_column(Text, server_default="'operational'")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
     __table_args__ = (
         CheckConstraint(
             "authorship IN ('human', 'claude', 'collaborative')",
             name="ck_av_authorship",
         ),
+        CheckConstraint(
+            "visibility_scope IN ('domain_wide', 'engagement_scoped', 'stakeholder_set', 'private')",
+            name="ck_artifact_versions_visibility_scope",
+        ),
+        CheckConstraint(
+            "retention_tier IN ('operational', 'archive_soon', 'archived', 'purge_eligible')",
+            name="ck_artifact_versions_retention_tier",
+        ),
         UniqueConstraint("artifact_id", "version_number", name="uq_artifact_versions"),
         Index("idx_av_artifact", "artifact_id", text("version_number DESC")),
+        Index("idx_artifact_versions_retention", "retention_tier"),
     )
 
 
@@ -522,17 +644,28 @@ class ExternalReference(Base):
     ref_type: Mapped[str] = mapped_column(Text)
     ref_value: Mapped[str] = mapped_column(Text)
     summary_md_path: Mapped[str | None] = mapped_column(Text)
+    unreachable: Mapped[bool] = mapped_column(Boolean, server_default="0")
+    visibility_scope: Mapped[str] = mapped_column(Text, server_default="'private'")
+    retention_tier: Mapped[str] = mapped_column(Text, server_default="'operational'")
     captured_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
-    unreachable: Mapped[bool] = mapped_column(Boolean, server_default="0")
 
     __table_args__ = (
         CheckConstraint(
             "ref_type IN ('url', 'email_msgid', 'git_commit', 'sharepoint', 'gdrive')",
             name="ck_extref_ref_type",
         ),
+        CheckConstraint(
+            "visibility_scope IN ('domain_wide', 'engagement_scoped', 'stakeholder_set', 'private')",
+            name="ck_external_references_visibility_scope",
+        ),
+        CheckConstraint(
+            "retention_tier IN ('operational', 'archive_soon', 'archived', 'purge_eligible')",
+            name="ck_external_references_retention_tier",
+        ),
         UniqueConstraint("ref_type", "ref_value", name="uq_external_references"),
         Index("idx_extref_unreachable", "unreachable", "last_verified_at"),
+        Index("idx_external_references_retention", "retention_tier"),
     )
 
 
@@ -545,6 +678,195 @@ class AtomExternalRef(Base):
     external_ref_id: Mapped[str] = mapped_column(
         String(26), ForeignKey("external_references.id"), primary_key=True
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.8 alignment: visibility membership, stakeholder roles, forward provenance
+# ---------------------------------------------------------------------------
+
+
+class EntityVisibilityMember(Base):
+    """Stakeholder-set visibility membership (link table per blueprint §6.4).
+
+    Composite PK over (entity_type, entity_id, stakeholder_id). entity_id is a
+    polymorphic reference; integrity is enforced at the service layer.
+    """
+
+    __tablename__ = "entity_visibility_members"
+
+    entity_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    entity_id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    stakeholder_id: Mapped[str] = mapped_column(
+        String(26), ForeignKey("stakeholders.id"), primary_key=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('event', 'atom', 'hypothesis',"
+            " 'artifact', 'artifact_version', 'external_reference')",
+            name="ck_evm_entity_type",
+        ),
+        Index("idx_evm_lookup", "entity_type", "entity_id"),
+    )
+
+
+class StakeholderRole(Base):
+    """Time-bounded stakeholder role periods per blueprint §4 (Stakeholders).
+
+    Replaces the work-specific work_stakeholder_roles (dropped in #076). Role
+    values come from the universal 10-role enum. scope_id is polymorphic.
+    """
+
+    __tablename__ = "stakeholder_roles"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    stakeholder_id: Mapped[str] = mapped_column(String(26), ForeignKey("stakeholders.id"))
+    domain: Mapped[str] = mapped_column(String(26), ForeignKey("domains.id"))
+    scope_type: Mapped[str] = mapped_column(Text)
+    scope_id: Mapped[str | None] = mapped_column(String(26))
+    role: Mapped[str] = mapped_column(Text)
+    started_at: Mapped[date] = mapped_column(Date)
+    ended_at: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
+
+    __table_args__ = (
+        CheckConstraint(
+            "scope_type IN ('arena', 'engagement', 'domain')",
+            name="ck_sr_scope_type",
+        ),
+        CheckConstraint(
+            "role IN ('sponsor', 'beneficiary', 'blocker', 'validator',"
+            " 'advocate', 'doer', 'influencer', 'advisor',"
+            " 'decision_maker', 'informed_party')",
+            name="ck_sr_role",
+        ),
+        Index(
+            "idx_sr_current",
+            "stakeholder_id",
+            "scope_id",
+            sqlite_where=text("ended_at IS NULL"),
+        ),
+        Index("idx_sr_scope", "scope_type", "scope_id", "ended_at"),
+    )
+
+
+class AtomContribution(Base):
+    """Forward-provenance index: atom → consumer per refactor plan §4.1.
+
+    Composite PK (atom_id, consumer_type, consumer_id). consumer_id is
+    polymorphic; integrity enforced at service layer.
+    """
+
+    __tablename__ = "atom_contributions"
+
+    atom_id: Mapped[str] = mapped_column(String(26), ForeignKey("atoms.id"), primary_key=True)
+    consumer_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    consumer_id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    contributed_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "consumer_type IN ('brief_run', 'state_change',"
+            " 'draft', 'sent_action', 'derived_atom')",
+            name="ck_ac_consumer_type",
+        ),
+        Index("idx_ac_consumer", "consumer_type", "consumer_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# v0.8 alignment: Resources / Leverage layer (blueprint §4 — Resources)
+# ---------------------------------------------------------------------------
+
+
+class Resource(Base):
+    """Leverage entity per blueprint §4 (Resources, the fourth atomic unit).
+
+    Seven category enum: time, people, financial, attention, credibility,
+    knowledge_asset, tooling_asset. Inferred-first discipline: inferred_from
+    distinguishes auto-inferred vs manual entry.
+    """
+
+    __tablename__ = "resources"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    domain: Mapped[str] = mapped_column(String(26), ForeignKey("domains.id"))
+    category: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    quantity: Mapped[float | None] = mapped_column(Float)
+    quantity_unit: Mapped[str | None] = mapped_column(Text)
+    quality_dimensions: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    expiry_at: Mapped[date | None] = mapped_column(Date)
+    replenishment_rule: Mapped[str | None] = mapped_column(Text)
+    inferred_from: Mapped[str | None] = mapped_column(Text)
+    visibility_scope: Mapped[str] = mapped_column(Text, server_default="'private'")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
+
+    __table_args__ = (
+        CheckConstraint(
+            "category IN ('time', 'people', 'financial', 'attention',"
+            " 'credibility', 'knowledge_asset', 'tooling_asset')",
+            name="ck_resources_category",
+        ),
+        CheckConstraint(
+            "inferred_from IS NULL OR inferred_from IN"
+            " ('calendar_density', 'mailbox_traffic', 'expense_reports',"
+            " 'response_patterns', 'usage_logs', 'manual')",
+            name="ck_resources_inferred_from",
+        ),
+        Index("idx_resources_category", "domain", "category"),
+        Index(
+            "idx_resources_expiry",
+            "expiry_at",
+            sqlite_where=text("expiry_at IS NOT NULL"),
+        ),
+    )
+
+
+class ResourceAttribution(Base):
+    """Resource → consumer attribution per refactor plan §1.8."""
+
+    __tablename__ = "resource_attributions"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(26), ForeignKey("resources.id"))
+    consumer_type: Mapped[str] = mapped_column(Text)
+    consumer_id: Mapped[str] = mapped_column(String(26))
+    quantity: Mapped[float] = mapped_column(Float)
+    window_start: Mapped[date] = mapped_column(Date)
+    window_end: Mapped[date] = mapped_column(Date)
+    attributed_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+    released_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    __table_args__ = (
+        CheckConstraint(
+            "consumer_type IN ('hypothesis', 'engagement', 'draft', 'sent_action')",
+            name="ck_ra_consumer_type",
+        ),
+        Index("idx_ra_resource", "resource_id", "released_at"),
+        Index("idx_ra_consumer", "consumer_type", "consumer_id"),
+    )
+
+
+class AssetUse(Base):
+    """Knowledge / tooling asset saturation tracking per refactor plan §1.8."""
+
+    __tablename__ = "asset_uses"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(26), ForeignKey("resources.id"))
+    audience_type: Mapped[str] = mapped_column(Text)
+    used_in_consumer_type: Mapped[str] = mapped_column(Text)
+    used_in_consumer_id: Mapped[str] = mapped_column(String(26))
+    used_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
+
+    __table_args__ = (Index("idx_asset_uses", "resource_id", "audience_type"),)
 
 
 # ---------------------------------------------------------------------------
@@ -693,6 +1015,8 @@ class BriefRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     success: Mapped[bool] = mapped_column(Boolean, server_default="1")
     error_message: Mapped[str | None] = mapped_column(Text)
+    composer_skill_version: Mapped[str | None] = mapped_column(Text)
+    provider_chain: Mapped[list[str] | None] = mapped_column(JSON)
 
     __table_args__ = (
         CheckConstraint(
@@ -715,6 +1039,7 @@ class ProcessorRun(Base):
     items_processed: Mapped[int | None] = mapped_column(Integer)
     items_failed: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
+    success: Mapped[bool] = mapped_column(Boolean, server_default="1")
 
     __table_args__ = (
         CheckConstraint(
@@ -727,26 +1052,32 @@ class ProcessorRun(Base):
 
 
 __all__ = [
+    "Arena",
     "Artifact",
     "ArtifactVersion",
+    "AssetUse",
     "Atom",
     "AtomAskDetails",
     "AtomAttachment",
     "AtomCommitmentDetails",
+    "AtomContribution",
     "AtomExternalRef",
     "AtomRiskDetails",
     "AtomStatusChange",
     "Base",
     "BriefRun",
     "Domain",
-    "Arena",
     "Engagement",
+    "EntityVisibilityMember",
     "Event",
     "ExternalReference",
     "Hypothesis",
     "HypothesisStateChange",
     "ProcessorRun",
+    "Resource",
+    "ResourceAttribution",
     "Stakeholder",
+    "StakeholderRole",
     "StateChangeEvidence",
     "TriageItem",
     "WorkAccountMetadata",

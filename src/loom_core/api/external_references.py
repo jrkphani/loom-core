@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom_core.api._deps import get_session
+from loom_core.api._deps import get_audience, get_session
 from loom_core.services.external_references import (
     AtomNotFoundError,
     ExternalReferenceNotFoundError,
@@ -24,6 +24,7 @@ from loom_core.services.external_references import (
     link_atom_to_external_ref,
     list_atom_external_refs,
 )
+from loom_core.storage.visibility import Audience
 
 router = APIRouter(tags=["external_references"])
 
@@ -108,9 +109,10 @@ async def post_external_reference(
 async def get_external_reference_by_id(
     ref_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
 ) -> ExternalReferenceRead:
     """Get a single external reference by ID."""
-    ref = await get_external_reference(session, ref_id)
+    ref = await get_external_reference(session, ref_id, audience=audience)
     if ref is None:
         raise HTTPException(
             status_code=404,
@@ -152,9 +154,10 @@ async def post_atom_external_ref_link(
 async def get_atom_external_refs(
     atom_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
 ) -> ExternalReferenceList:
     """Return all external references linked to an atom, ordered by captured_at DESC."""
-    rows = await list_atom_external_refs(session, atom_id)
+    rows = await list_atom_external_refs(session, atom_id, audience=audience)
     if rows is None:
         raise HTTPException(
             status_code=404,

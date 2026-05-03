@@ -31,9 +31,12 @@ async def finish_processor_run(
     *,
     items_processed: int,
     items_failed: int,
+    success: bool = True,
     notes: str | None = None,
 ) -> ProcessorRun | None:
     """Update a processor_runs row on completion.
+
+    ``success`` defaults to True so happy-path callers can omit it.
 
     Returns:
         The updated :class:`ProcessorRun`, or None if run_id was not found.
@@ -44,6 +47,7 @@ async def finish_processor_run(
     run.completed_at = datetime.now(UTC)
     run.items_processed = items_processed
     run.items_failed = items_failed
+    run.success = success
     run.notes = notes
     await session.flush()
     await session.refresh(run)

@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom_core.api._deps import get_session
+from loom_core.api._deps import get_audience, get_session
+from loom_core.storage.visibility import Audience
 from loom_core.services.engagements import (
     ArenaNotFoundError,
     EngagementAlreadyClosedError,
@@ -162,15 +163,16 @@ async def post_engagements(
 @router.get("/engagements", response_model=EngagementList)
 async def get_engagements(
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
     domain: str = "work",
     arena_id: str | None = None,
     closed: bool | None = None,
 ) -> EngagementList:
     """List engagements with optional filters."""
-    rows = await list_engagements(session, domain=domain, arena_id=arena_id, closed=closed)
+    rows = await list_engagements(session, audience=audience, domain=domain, arena_id=arena_id, closed=closed)
     items = []
     for eng in rows:
-        result = await get_engagement(session, eng.id)
+        result = await get_engagement(session, eng.id, audience=audience)
         if result is None:
             continue
         e, meta = result
@@ -184,9 +186,10 @@ async def get_engagements(
 async def get_engagement_by_id(
     engagement_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
 ) -> EngagementRead:
     """Get a single engagement by ID."""
-    result = await get_engagement(session, engagement_id)
+    result = await get_engagement(session, engagement_id, audience=audience)
     if result is None:
         raise HTTPException(
             status_code=404,

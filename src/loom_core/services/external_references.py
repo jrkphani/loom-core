@@ -13,6 +13,7 @@ from loom_core.storage.models import (
     AtomExternalRef,
     ExternalReference,
 )
+from loom_core.storage.visibility import Audience, visibility_predicate
 
 
 class AtomNotFoundError(Exception):
@@ -61,9 +62,24 @@ async def create_external_reference(
 async def get_external_reference(
     session: AsyncSession,
     ref_id: str,
+    *,
+    audience: Audience,
 ) -> ExternalReference | None:
-    """Return an external reference by ID, or None if not found."""
-    return await session.get(ExternalReference, ref_id)
+    """Return an external reference by ID, or None if not found/visible."""
+    stmt = (
+        select(ExternalReference)
+        .where(ExternalReference.id == ref_id)
+        .where(
+            visibility_predicate(
+                ExternalReference.visibility_scope,
+                "external_reference",
+                ExternalReference.id,
+                audience,
+            )
+        )
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def link_atom_to_external_ref(
@@ -102,12 +118,21 @@ async def link_atom_to_external_ref(
 async def list_atom_external_refs(
     session: AsyncSession,
     atom_id: str,
+    *,
+    audience: Audience,
 ) -> Sequence[ExternalReference] | None:
     """Return all external references linked to an atom, ordered by captured_at DESC.
 
-    Returns None if the atom does not exist (route maps to 404).
+    Returns None if the atom does not exist or is not visible (route maps to 404).
+    Filters out external references that are not visible to the audience.
     """
-    atom = await session.get(Atom, atom_id)
+    atom_stmt = (
+        select(Atom)
+        .where(Atom.id == atom_id)
+        .where(Atom.retracted.is_(False))
+        .where(visibility_predicate(Atom.visibility_scope, "atom", Atom.id, audience))
+    )
+    atom = (await session.execute(atom_stmt)).scalar_one_or_none()
     if atom is None:
         return None
 
@@ -115,6 +140,14 @@ async def list_atom_external_refs(
         select(ExternalReference)
         .join(AtomExternalRef, AtomExternalRef.external_ref_id == ExternalReference.id)
         .where(AtomExternalRef.atom_id == atom_id)
+        .where(
+            visibility_predicate(
+                ExternalReference.visibility_scope,
+                "external_reference",
+                ExternalReference.id,
+                audience,
+            )
+        )
         .order_by(ExternalReference.captured_at.desc())
     )
     return (await session.execute(stmt)).scalars().all()

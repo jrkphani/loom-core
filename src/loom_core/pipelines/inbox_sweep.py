@@ -58,5 +58,6 @@ async def inbox_sweep_job(
             run_id,
             items_processed=items_processed,
             items_failed=items_failed,
+            success=True,
         )
         await session.commit()

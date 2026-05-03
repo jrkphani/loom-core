@@ -28,9 +28,12 @@ from loom_core.services.hypotheses import (
     StateChangeProposalNotFoundError,
     close_hypothesis,
     confirm_state_proposal,
+    get_hypothesis,
+    list_hypotheses,
     list_state_history,
     list_state_proposals,
     override_state_proposal,
+    update_hypothesis,
 )
 from loom_core.storage.models import (
     Arena,
@@ -40,6 +43,7 @@ from loom_core.storage.models import (
     TriageItem,
 )
 from loom_core.storage.session import create_engine, create_session_factory
+from loom_core.storage.visibility import Audience
 
 
 @pytest.fixture
@@ -222,7 +226,7 @@ async def test_list_state_history_orders_changed_at_desc(svc_session: AsyncSessi
     await svc_session.commit()
 
     async with app.state.session_factory() as session2:
-        rows = await list_state_history(session2, hyp_id)
+        rows = await list_state_history(session2, hyp_id, audience=Audience.for_self())
 
     assert rows is not None
     assert len(rows) == 3
@@ -258,8 +262,12 @@ async def test_list_state_history_filters_by_dimension(svc_session: AsyncSession
     await svc_session.commit()
 
     async with app.state.session_factory() as session2:
-        progress_rows = await list_state_history(session2, hyp_id, dimension="progress")
-        confidence_rows = await list_state_history(session2, hyp_id, dimension="confidence")
+        progress_rows = await list_state_history(
+            session2, hyp_id, audience=Audience.for_self(), dimension="progress"
+        )
+        confidence_rows = await list_state_history(
+            session2, hyp_id, audience=Audience.for_self(), dimension="confidence"
+        )
 
     assert progress_rows is not None
     assert len(progress_rows) == 2
@@ -326,7 +334,7 @@ async def test_list_state_proposals_returns_only_pending_state_change_proposals(
     await svc_session.commit()
 
     async with app.state.session_factory() as session2:
-        proposals = await list_state_proposals(session2, hyp_a_id)
+        proposals = await list_state_proposals(session2, hyp_a_id, audience=Audience.for_self())
 
     assert proposals is not None
     assert len(proposals) == 1
@@ -552,3 +560,119 @@ async def test_override_state_proposal_whitespace_reason_raises(svc_session: Asy
                 override_reason="   ",
             )
         await session2.rollback()
+
+
+async def test_get_hypothesis_honours_audience(svc_session: AsyncSession) -> None:
+    """get_hypothesis filters out hypotheses not visible to the audience."""
+    hyp_id = await _insert_hypothesis(svc_session, current_progress="proposed")
+
+    # Make it private
+    hyp = await svc_session.get(Hypothesis, hyp_id)
+    assert hyp is not None
+    hyp.visibility_scope = "private"
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session2:
+        # Self audience sees private
+        h1 = await get_hypothesis(session2, hyp_id, audience=Audience.for_self())
+        assert h1 is not None
+
+        # Stakeholder audience does not see private
+        sh_audience = Audience.for_stakeholders(["SH_1"])
+        h2 = await get_hypothesis(session2, hyp_id, audience=sh_audience)
+        assert h2 is None
+
+
+async def test_list_hypotheses_honours_audience(svc_session: AsyncSession) -> None:
+    """list_hypotheses filters out hypotheses not visible to the audience."""
+    hyp1_id = await _insert_hypothesis(svc_session, current_progress="proposed")
+    hyp2_id = await _insert_hypothesis(svc_session, current_progress="proposed")
+
+    hyp1 = await svc_session.get(Hypothesis, hyp1_id)
+    assert hyp1 is not None
+    hyp1.visibility_scope = "domain_wide"
+
+    # Make hyp2 private
+    hyp2 = await svc_session.get(Hypothesis, hyp2_id)
+    assert hyp2 is not None
+    hyp2.visibility_scope = "private"
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session2:
+        # Self audience sees both
+        rows = await list_hypotheses(session2, audience=Audience.for_self())
+        assert len(rows) == 2
+
+        # Stakeholder audience sees only public
+        sh_audience = Audience.for_stakeholders(["SH_1"])
+        rows_sh = await list_hypotheses(session2, audience=sh_audience)
+        assert len(rows_sh) == 1
+        assert rows_sh[0].id == hyp1_id
+
+
+async def test_list_state_history_honours_audience(svc_session: AsyncSession) -> None:
+    """list_state_history returns None if the parent hypothesis is not visible."""
+    hyp_id = await _insert_hypothesis(svc_session, current_progress="proposed")
+
+    # Insert a state-change row directly so history exists.
+    state_change = HypothesisStateChange(
+        id=str(ULID()),
+        hypothesis_id=hyp_id,
+        dimension="progress",
+        old_value="proposed",
+        new_value="in_delivery",
+        changed_at=datetime.now(UTC),
+        changed_by="human_confirmed",
+    )
+    svc_session.add(state_change)
+    await svc_session.commit()
+
+    # Make hypothesis private
+    hyp = await svc_session.get(Hypothesis, hyp_id)
+    assert hyp is not None
+    hyp.visibility_scope = "private"
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session2:
+        # Self audience sees history
+        history_self = await list_state_history(session2, hyp_id, audience=Audience.for_self())
+        assert history_self is not None
+        assert len(history_self) > 0
+
+        # Stakeholder audience sees None (behaves as NOT_FOUND)
+        sh_audience = Audience.for_stakeholders(["SH_1"])
+        history_sh = await list_state_history(session2, hyp_id, audience=sh_audience)
+        assert history_sh is None
+
+
+async def test_list_state_proposals_honours_audience(svc_session: AsyncSession) -> None:
+    """list_state_proposals returns None if the parent hypothesis is not visible."""
+    hyp_id = await _insert_hypothesis(svc_session, current_progress="proposed")
+
+    # Add a pending state-change proposal.
+    proposal = TriageItem(
+        id=str(ULID()),
+        item_type="state_change_proposal",
+        related_entity_type="hypothesis",
+        related_entity_id=hyp_id,
+        surfaced_at=datetime.now(UTC),
+        resolved_at=None,
+    )
+    svc_session.add(proposal)
+
+    # Make hypothesis private
+    hyp = await svc_session.get(Hypothesis, hyp_id)
+    assert hyp is not None
+    hyp.visibility_scope = "private"
+    await svc_session.commit()
+
+    async with app.state.session_factory() as session2:
+        # Self audience sees proposals
+        proposals_self = await list_state_proposals(session2, hyp_id, audience=Audience.for_self())
+        assert proposals_self is not None
+        assert len(proposals_self) > 0
+
+        # Stakeholder audience sees None (behaves as NOT_FOUND)
+        sh_audience = Audience.for_stakeholders(["SH_1"])
+        proposals_sh = await list_state_proposals(session2, hyp_id, audience=sh_audience)
+        assert proposals_sh is None

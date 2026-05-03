@@ -14,8 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom_core.api._deps import get_session
+from loom_core.api._deps import get_audience, get_session
 from loom_core.services.events import create_event, get_event, list_events
+from loom_core.storage.visibility import Audience
 
 router = APIRouter(tags=["events"])
 
@@ -94,11 +95,12 @@ async def post_events(
 @router.get("/events", response_model=EventList)
 async def get_events(
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
     domain: str,
     type: EventTypeLiteral | None = None,
 ) -> EventList:
     """List events filtered by domain and optionally by type, ordered by occurred_at DESC."""
-    rows = await list_events(session, domain=domain, event_type=type)
+    rows = await list_events(session, domain=domain, audience=audience, event_type=type)
     return EventList(events=[EventRead.model_validate(r) for r in rows])
 
 
@@ -106,9 +108,10 @@ async def get_events(
 async def get_event_by_id(
     event_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    audience: Annotated[Audience, Depends(get_audience)],
 ) -> EventRead:
     """Get a single event by ID."""
-    event = await get_event(session, event_id)
+    event = await get_event(session, event_id, audience=audience)
     if event is None:
         raise HTTPException(
             status_code=404,

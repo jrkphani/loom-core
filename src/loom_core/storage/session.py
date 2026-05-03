@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -27,8 +29,17 @@ def _build_url(db_path: Path) -> str:
     return f"sqlite+aiosqlite:///{db_path}"
 
 
+def _set_sqlite_pragmas(dbapi_conn: Any, _: Any) -> None:
+    """Enable WAL mode and foreign-key enforcement on every new connection."""
+    dbapi_conn.execute("PRAGMA journal_mode=WAL")
+    dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+
 def create_engine(db_path: Path, *, echo: bool = False) -> AsyncEngine:
     """Create an async engine configured for Loom Core's single-writer model.
+
+    WAL mode and FK enforcement are wired on every connection via a SQLAlchemy
+    event listener registered here, so callers need no additional setup.
 
     Args:
         db_path: Filesystem path to the SQLite database file. Parent directory
@@ -36,16 +47,12 @@ def create_engine(db_path: Path, *, echo: bool = False) -> AsyncEngine:
         echo: If True, log every emitted SQL statement (debugging only).
 
     Returns:
-        An `AsyncEngine` configured with WAL mode enabled, foreign keys on, and
-        a small connection pool sized for one writer + a handful of readers.
+        An `AsyncEngine` with WAL mode enabled and foreign keys enforced on
+        every connection.
     """
-    return create_async_engine(
-        _build_url(db_path),
-        echo=echo,
-        # SQLite-specific: WAL mode and FK enforcement set per-connection.
-        # Apply via `event.listens_for(engine.sync_engine, "connect")` in app
-        # bootstrap; this factory leaves connection setup to startup code.
-    )
+    engine = create_async_engine(_build_url(db_path), echo=echo)
+    event.listen(engine.sync_engine, "connect", _set_sqlite_pragmas)
+    return engine
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

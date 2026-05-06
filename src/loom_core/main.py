@@ -22,6 +22,7 @@ from fastapi import FastAPI
 
 from loom_core import __version__
 from loom_core.api.arenas import router as arenas_router
+from loom_core.api.atoms import router as atoms_router
 from loom_core.api.engagements import router as engagements_router
 from loom_core.api.events import router as events_router
 from loom_core.api.external_references import router as external_references_router
@@ -100,6 +101,7 @@ app = FastAPI(
 # v1 path prefix. Breaking changes will go to /v2.
 app.include_router(health_router, prefix="/v1")
 app.include_router(arenas_router, prefix="/v1")
+app.include_router(atoms_router, prefix="/v1")
 app.include_router(engagements_router, prefix="/v1")
 app.include_router(events_router, prefix="/v1")
 app.include_router(external_references_router, prefix="/v1")

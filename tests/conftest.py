@@ -3,9 +3,13 @@
 Conventions (per `../loom-meta/docs/PRD.md` §10.2):
 - SQLite is real (in-memory or temp-file), never mocked.
 - Apple AI sidecar is mocked at HTTP boundary (pytest-httpx).
-- Claude API is mocked at SDK boundary.
+- Claude API is mocked at SDK boundary (Protocol + fake; see
+  `tests/pipelines/test_extractor_llm.py::FakeClaudeClient`).
 - Time is injected and mock-able where cron / staleness matters.
 - Loom's own modules are never mocked.
+
+Tests marked `@pytest.mark.external` (real-API smoke tests) are skipped by
+default; pass `--run-external` to opt in. The hook is below.
 """
 
 from __future__ import annotations
@@ -23,6 +27,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loom_core.api._deps import get_session
 from loom_core.main import app
 from loom_core.storage.session import create_engine, create_session_factory
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register --run-external CLI flag for opt-in real-API tests."""
+    parser.addoption(
+        "--run-external",
+        action="store_true",
+        default=False,
+        help="Run tests marked @pytest.mark.external (real-API smoke tests).",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip `external`-marked tests unless --run-external is passed."""
+    if config.getoption("--run-external"):
+        return
+    skip_external = pytest.mark.skip(reason="needs --run-external")
+    for item in items:
+        if "external" in item.keywords:
+            item.add_marker(skip_external)
 
 
 @pytest.fixture

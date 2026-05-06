@@ -58,6 +58,7 @@ class ClaudeSettings(BaseModel):
 
     model_default: str = "claude-opus-4-7"
     model_extraction: str = "claude-sonnet-4-6"
+    extraction_max_tokens: int = 4096
     max_retries: int = 3
     timeout_seconds: int = 60
 

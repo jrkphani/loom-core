@@ -35,7 +35,7 @@ A task is not complete until **all six** pass with zero errors:
 ```bash
 uv run ruff check
 uv run ruff format --check
-uv run mypy --strict
+uv run mypy --strict src/ tests/
 uv run pytest
 uv run pytest -m visibility    # explicit visibility regression run (#079)
 uv run alembic check           # ORM models match migration head

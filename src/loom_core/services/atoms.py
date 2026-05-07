@@ -22,11 +22,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
 from loom_core.storage.models import (
+    Artifact,
     Atom,
     AtomAskDetails,
     AtomCommitmentDetails,
+    AtomExternalRef,
     AtomRiskDetails,
     AtomStatusChange,
+    Event,
+    ExternalReference,
 )
 from loom_core.storage.visibility import Audience, visibility_predicate
 
@@ -222,6 +226,145 @@ async def update_risk_details(
         details.owner_stakeholder_id = owner_stakeholder_id  # type: ignore[assignment]
     await session.flush()
     return details
+
+
+async def list_atoms(
+    session: AsyncSession,
+    *,
+    audience: Audience,
+    domain: str | None = None,
+    atom_type: str | None = None,
+    event_id: str | None = None,
+    hypothesis_id: str | None = None,
+    dismissed: bool = False,
+) -> Sequence[Atom]:
+    """List atoms with audience-scoped visibility filtering.
+
+    Filters AND together (DC10). Default dismissed=False (DC1). Default
+    ordering is `confidence_sort_key DESC, created_at DESC` (DC8). Retracted
+    atoms are NOT filtered here — that policy lives in #084 (DC2).
+
+    Joining via `atom_attachments` for hypothesis_id (DC9). The bridge join
+    column is `atom_id`; visibility on atoms still applies regardless.
+    """
+    stmt = select(Atom).where(
+        visibility_predicate(Atom.visibility_scope, "atom", Atom.id, audience)
+    )
+    stmt = stmt.where(Atom.dismissed.is_(dismissed))
+    if domain is not None:
+        stmt = stmt.where(Atom.domain == domain)
+    if atom_type is not None:
+        stmt = stmt.where(Atom.type == atom_type)
+    if event_id is not None:
+        stmt = stmt.where(Atom.event_id == event_id)
+    if hypothesis_id is not None:
+        from loom_core.storage.models import AtomAttachment
+
+        stmt = stmt.join(AtomAttachment, AtomAttachment.atom_id == Atom.id).where(
+            AtomAttachment.hypothesis_id == hypothesis_id
+        )
+    stmt = stmt.order_by(Atom.confidence_sort_key.desc(), Atom.created_at.desc())
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+# Detail-block dispatch for GET /:id (DC7). Mirrors _LIFECYCLE_DISPATCH's
+# explicit shape: kind → detail-table model class. Decision and status_update
+# have no detail table; they yield None and the response carries `details: null`.
+_DetailType = type[AtomCommitmentDetails] | type[AtomAskDetails] | type[AtomRiskDetails]
+_DETAIL_DISPATCH: dict[str, _DetailType] = {
+    "commitment": AtomCommitmentDetails,
+    "ask": AtomAskDetails,
+    "risk": AtomRiskDetails,
+}
+
+
+async def get_atom_with_details(
+    session: AsyncSession,
+    atom_id: str,
+    *,
+    audience: Audience,
+) -> tuple[Atom, Event | None, Artifact | None, object | None]:
+    """Return the atom, its source (event or artifact), and its kind detail row.
+
+    Visibility-scoped on the atom (DC6). Source loaded without secondary
+    visibility filtering — if the atom is visible, its provenance is visible.
+    Detail dispatched on `atom.type` (DC7); decision and status_update return
+    None for the detail block.
+
+    Raises:
+        AtomNotFoundError: atom doesn't exist or isn't visible.
+    """
+    atom = await get_atom(session, atom_id, audience=audience)
+    if atom is None:
+        raise AtomNotFoundError(atom_id)
+
+    event: Event | None = None
+    artifact: Artifact | None = None
+    if atom.event_id is not None:
+        event = (
+            await session.execute(select(Event).where(Event.id == atom.event_id))
+        ).scalar_one_or_none()
+    elif atom.artifact_id is not None:
+        artifact = (
+            await session.execute(select(Artifact).where(Artifact.id == atom.artifact_id))
+        ).scalar_one_or_none()
+
+    detail: object | None = None
+    detail_cls = _DETAIL_DISPATCH.get(atom.type)
+    if detail_cls is not None:
+        detail = (
+            await session.execute(select(detail_cls).where(detail_cls.atom_id == atom_id))
+        ).scalar_one_or_none()
+
+    return atom, event, artifact, detail
+
+
+async def get_atom_provenance(
+    session: AsyncSession,
+    atom_id: str,
+    *,
+    audience: Audience,
+) -> tuple[Atom, Event | None, Artifact | None, Sequence[ExternalReference]]:
+    """Return the atom, its source, and its linked external references.
+
+    Visibility-scoped on the atom (DC6). Source and external_refs loaded
+    without secondary visibility filtering.
+
+    Raises:
+        AtomNotFoundError: atom doesn't exist or isn't visible.
+    """
+    atom = await get_atom(session, atom_id, audience=audience)
+    if atom is None:
+        raise AtomNotFoundError(atom_id)
+
+    event: Event | None = None
+    artifact: Artifact | None = None
+    if atom.event_id is not None:
+        event = (
+            await session.execute(select(Event).where(Event.id == atom.event_id))
+        ).scalar_one_or_none()
+    elif atom.artifact_id is not None:
+        artifact = (
+            await session.execute(select(Artifact).where(Artifact.id == atom.artifact_id))
+        ).scalar_one_or_none()
+
+    refs = (
+        (
+            await session.execute(
+                select(ExternalReference)
+                .join(
+                    AtomExternalRef,
+                    AtomExternalRef.external_ref_id == ExternalReference.id,
+                )
+                .where(AtomExternalRef.atom_id == atom_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    return atom, event, artifact, refs
 
 
 async def list_atom_status_history(

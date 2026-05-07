@@ -30,18 +30,24 @@ curl http://127.0.0.1:9100/v1/health
 
 ## Verification gates
 
-A task is not complete until **all six** pass with zero errors:
+A task is not complete until **all eight** pass with zero errors:
 
 ```bash
 uv run ruff check
 uv run ruff format --check
 uv run mypy --strict src/ tests/
+uv run mypy --strict alembic   # catches alembic typing regressions (#093)
+uv run mypy --strict tests/    # catches py.typed marker regression (#094)
 uv run pytest
 uv run pytest -m visibility    # explicit visibility regression run (#079)
 uv run alembic check           # ORM models match migration head
 ```
 
 The `pytest -m visibility` run is redundant with the broader `pytest` run (which includes the marked tests by default), but invoking it explicitly catches a regression where a new visibility test is added without the marker — the marker-only run would surface a missing test or a wrong count.
+
+The `mypy --strict tests/` run is similarly redundant with the joint `src/ tests/` invocation when `loom_core/py.typed` exists. Invoking it explicitly catches accidental removal of the marker — the joint form would silently still pass because `loom_core` is in scope, masking the regression for any cross-package consumer (loom-mcp, future repos) that needs the marker.
+
+The `mypy --strict alembic` run gates the migrations directory, which is outside `src/` and `tests/` and would otherwise be uncovered. Catches typing drift in new migrations.
 
 ## Layout
 

@@ -374,11 +374,13 @@ def upgrade() -> None:
         batch_op.create_index("idx_atoms_event", ["event_id"], unique=False)
         # Skipped by autogenerate (expression-based indexes with DESC column).
         batch_op.create_index(
-            "idx_atoms_dismissed", ["dismissed", sa.text("created_at DESC")], unique=False
+            "idx_atoms_dismissed",
+            ["dismissed", sa.text("created_at DESC")],  # type: ignore[list-item]
+            unique=False,
         )
         batch_op.create_index(
             "idx_atoms_type",
-            ["domain", "type", "dismissed", sa.text("created_at DESC")],
+            ["domain", "type", "dismissed", sa.text("created_at DESC")],  # type: ignore[list-item]
             unique=False,
         )
 
@@ -688,7 +690,7 @@ def upgrade() -> None:
         # Skipped by autogenerate (expression-based index with DESC column).
         batch_op.create_index(
             "idx_attach_hypothesis",
-            ["hypothesis_id", "dismissed", sa.text("attached_at DESC")],
+            ["hypothesis_id", "dismissed", sa.text("attached_at DESC")],  # type: ignore[list-item]
             unique=False,
         )
 
